@@ -2,171 +2,258 @@ import pygame
 import random
 import sys
 
-# 初始化 Pygame
+# -----------------------------------------------------------------------------
+# 1. 初始化 Pygame 與基礎設定
+# -----------------------------------------------------------------------------
 pygame.init()
 
-# 遊戲視窗與網格設定
-GRID_SIZE = 30  # 每個格子的大小 (像素)
+GRID_SIZE = 30  # 每個格子的大小（像素）
 COLS, ROWS = 10, 20  # 網格行數與列數
-WIDTH = COLS * GRID_SIZE
-HEIGHT = ROWS * GRID_SIZE
+GAME_WIDTH = COLS * GRID_SIZE  # 遊戲主網格寬度 (300)
+SIDEBAR_WIDTH = 180  # 右側提示區寬度
+WIDTH = GAME_WIDTH + SIDEBAR_WIDTH  # 總視窗寬度 (480)
+HEIGHT = ROWS * GRID_SIZE  # 總視窗高度 (600)
 FPS = 60
 
 # 顏色定義 (RGB)
 BLACK = (20, 20, 20)
 GRAY = (50, 50, 50)
 WHITE = (255, 255, 255)
-COLORS = [
-    (0, 255, 255),  # I - 青色
-    (255, 255, 0),  # O - 黃色
-    (128, 0, 128),  # T - 紫色
-    (0, 255, 0),  # S - 綠色
-    (255, 0, 0),  # Z - 紅色
-    (0, 0, 255),  # J - 藍色
-    (255, 165, 0)  # L - 橘色
-]
+LIGHT_GRAY = (100, 100, 100)
+GRID_LINE_COLOR = (40, 40, 40)  # 💡 新增：背景網格線的淡淡灰色
 
-# 方塊形狀定義 (使用 4x4 或 3x3 矩陣坐標)
-SHAPES = [
-    [[1, 5, 9, 13], [4, 5, 6, 7]],  # I
-    [[1, 2, 5, 6]],  # O
-    [[1, 4, 5, 6], [1, 5, 9, 6], [4, 5, 6, 9], [1, 4, 5, 9]],  # T
-    [[1, 2, 4, 5], [0, 4, 5, 9]],  # S
-    [[0, 1, 5, 6], [1, 5, 4, 8]],  # Z
-    [[1, 5, 8, 9], [4, 5, 6, 2], [0, 1, 5, 9], [4, 5, 6, 8]],  # J
-    [[1, 5, 9, 10], [4, 5, 6, 0], [0, 1, 5, 9], [4, 5, 6, 2]]  # L
-]
+# 7種方塊的形狀定義（用 0 和 1 表示）
+SHAPES = {
+    'I': [[1, 1, 1, 1]],
+    'O': [[1, 1],
+          [1, 1]],
+    'T': [[0, 1, 0],
+          [1, 1, 1]],
+    'S': [[0, 1, 1],
+          [1, 1, 0]],
+    'Z': [[1, 1, 0],
+          [0, 1, 1]],
+    'J': [[1, 0, 0],
+          [1, 1, 1]],
+    'L': [[0, 0, 1],
+          [1, 1, 1]]
+}
 
-
-class Piece:
-    def __init__(self, x, y):
-        self.x = x
-        self.y = y
-        self.type = random.randint(0, len(SHAPES) - 1)
-        self.color = COLORS[self.type]
-        self.rotation = 0
-
-    def image(self):
-        return SHAPES[self.type][self.rotation]
-
-    def rotate(self):
-        self.rotation = (self.rotation + 1) % len(SHAPES[self.type])
+# 每種方塊對應的顏色
+SHAPE_COLORS = {
+    'I': (0, 255, 255),  # 青色
+    'O': (255, 255, 0),  # 黃色
+    'T': (128, 0, 128),  # 紫色
+    'S': (0, 255, 0),  # 綠色
+    'Z': (255, 0, 0),  # 紅色
+    'J': (0, 0, 255),  # 藍色
+    'L': (255, 165, 0)  # 橘色
+}
 
 
-class Tetris:
+# -----------------------------------------------------------------------------
+# 2. 俄羅斯方塊核心邏輯類別
+# -----------------------------------------------------------------------------
+class TetrisGame:
     def __init__(self):
-        self.grid = [[0] * COLS for _ in range(ROWS)]
+        # 初始化遊戲地圖（全空，用黑色 (20,20,20) 代表沒方塊）
+        self.grid = [[BLACK for _ in range(COLS)] for _ in range(ROWS)]
         self.score = 0
         self.game_over = False
-        self.current_piece = Piece(3, 0)
 
-    def check_collision(self, piece, offset_x=0, offset_y=0, check_rotation=False):
-        """檢查方塊是否與牆壁或固定方塊發生碰撞"""
-        temp_rotation = piece.rotation
-        if check_rotation:
-            piece.rotate()
+        # 一開始就先抽好「當前方塊」和「下一個方塊」
+        self.current_shape_key = random.choice(list(SHAPES.keys()))
+        self.current_piece = SHAPES[self.current_shape_key]
+        self.current_color = SHAPE_COLORS[self.current_shape_key]
 
-        collision = False
-        for i in range(4):
-            for j in range(4):
-                if i * 4 + j in piece.image():
-                    next_x = piece.x + j + offset_x
-                    next_y = piece.y + i + offset_y
+        self.next_shape_key = random.choice(list(SHAPES.keys()))
+        self.next_piece = SHAPES[self.next_shape_key]
+        self.next_color = SHAPE_COLORS[self.next_shape_key]
 
-                    # 檢查邊界與是否碰到既有方塊
-                    if next_x < 0 or next_x >= COLS or next_y >= ROWS:
-                        collision = True
-                    elif next_y >= 0 and self.grid[next_y][next_x] != 0:
-                        collision = True
+        # 方塊初始出生位置（上方中央）
+        self.piece_x = COLS // 2 - len(self.current_piece[0]) // 2
+        self.piece_y = 0
 
-        if check_rotation:
-            # 復原旋轉狀態
-            piece.rotation = temp_rotation
-        return collision
+    def reset_current_piece(self):
+        """當方塊固定後，把預備好的下一個方塊遞補上來，並抽新的下一個方塊"""
+        self.current_shape_key = self.next_shape_key
+        self.current_piece = self.next_piece
+        self.current_color = self.next_color
 
-    def lock_piece(self):
-        """將方塊固定在網格中"""
-        for i in range(4):
-            for j in range(4):
-                if i * 4 + j in self.current_piece.image():
-                    if self.current_piece.y + i >= 0:
-                        self.grid[self.current_piece.y + i][self.current_piece.x + j] = self.current_piece.color
-        self.clear_lines()
-        # 生成新方塊
-        self.current_piece = Piece(3, 0)
-        # 如果新方塊一出生就碰撞，代表死棋了
-        if self.check_collision(self.current_piece):
+        # 抽取全新的「下一個方塊」
+        self.next_shape_key = random.choice(list(SHAPES.keys()))
+        self.next_piece = SHAPES[self.next_shape_key]
+        self.next_color = SHAPE_COLORS[self.next_shape_key]
+
+        # 重設出生位置
+        self.piece_x = COLS // 2 - len(self.current_piece[0]) // 2
+        self.piece_y = 0
+
+        # 如果一出生就撞到，代表頂天了，Game Over
+        if self.check_collision(self.current_piece, self.piece_x, self.piece_y):
             self.game_over = True
 
+    def check_collision(self, piece, offset_x, offset_y):
+        """檢查方塊是否撞到邊界或已經落下的方塊"""
+        for r, row in enumerate(piece):
+            for c, cell in enumerate(row):
+                if cell:
+                    new_x = offset_x + c
+                    new_y = offset_y + r
+                    # 檢查超出左右邊界或底部的邊界
+                    if new_x < 0 or new_x >= COLS or new_y >= ROWS:
+                        return True
+                    # 檢查是否撞到網格內現有的方塊（非黑色代表有方塊）
+                    if new_y >= 0 and self.grid[new_y][new_x] != BLACK:
+                        return True
+        return False
+
+    def lock_piece(self):
+        """將方塊固定到網格中，並檢查消行與加分"""
+        for r, row in enumerate(self.current_piece):
+            for c, cell in enumerate(row):
+                if cell:
+                    if self.piece_y + r >= 0:
+                        self.grid[self.piece_y + r][self.piece_x + c] = self.current_color
+
+        self.clear_lines()
+        self.reset_current_piece()
+
     def clear_lines(self):
-        """消除滿行並計分"""
-        lines_cleared = 0
-        new_grid = [row for row in self.grid if any(cell == 0 for cell in row)]
-        lines_cleared = ROWS - len(new_grid)
-
-        # 補足被消除的行數
-        for _ in range(lines_cleared):
-            new_grid.insert(0, [0] * COLS)
-
-        self.grid = new_grid
-        self.score += lines_cleared * 100
-
-    def move_down(self):
-        if not self.check_collision(self.current_piece, offset_y=1):
-            self.current_piece.y += 1
-        else:
-            self.lock_piece()
+        """檢查是否有整行填滿，並進行消行加分"""
+        new_grid = [row for row in self.grid if any(cell == BLACK for cell in row)]
+        cleared = ROWS - len(new_grid)
+        if cleared > 0:
+            self.score += cleared * 100
+            # 補足上方空行
+            while len(new_grid) < ROWS:
+                new_grid.insert(0, [BLACK for _ in range(COLS)])
+            self.grid = new_grid
 
     def move_side(self, dx):
-        if not self.check_collision(self.current_piece, offset_x=dx):
-            self.current_piece.x += dx
+        """左右移動方塊"""
+        if not self.check_collision(self.current_piece, self.piece_x + dx, self.piece_y):
+            self.piece_x += dx
 
-    def rotate_piece(self):
-        if not self.check_collision(self.current_piece, check_rotation=True):
-            self.current_piece.rotate()
+    def move_down(self):
+        """向下移動方塊（自動下落或手動加速用）。回傳 True 代表移動成功，False 代表撞到底了"""
+        if not self.check_collision(self.current_piece, self.piece_x, self.piece_y + 1):
+            self.piece_y += 1
+            return True
+        else:
+            self.lock_piece()
+            return False
+
+    def rotate(self):
+        """順時針旋轉方塊，若轉了會撞到，會嘗試進行左右修正 (簡單壁面踢擊)"""
+        # 矩陣轉置並翻轉，達到順時針旋轉
+        rotated = [list(x) for x in zip(*self.current_piece[::-1])]
+
+        # 嘗試在原本位置，或往左移、往右移 1 格內看能不能順利旋轉
+        for kick in [0, -1, 1]:
+            if not self.check_collision(rotated, self.piece_x + kick, self.piece_y):
+                self.current_piece = rotated
+                self.piece_x += kick
+                break
+
+    def hard_drop(self):
+        """利用 while 迴圈讓方塊在瞬間以最高速衝到底部，並立刻固定"""
+        while self.move_down():
+            pass  # 一直呼叫 move_down 直到它回傳 False 為止
 
 
-def draw_grid(screen, grid):
-    """繪製已經固定的方塊和背景網格線"""
+# -----------------------------------------------------------------------------
+# 3. 畫面繪製函式
+# -----------------------------------------------------------------------------
+def draw_screen(screen, game):
+    screen.fill(BLACK)
+
+    # 💡 新增：繪製背景輔助網格線（直條線與橫條線）
+    for c in range(COLS + 1):
+        pygame.draw.line(screen, GRID_LINE_COLOR, (c * GRID_SIZE, 0), (c * GRID_SIZE, HEIGHT))
+    for r in range(ROWS + 1):
+        pygame.draw.line(screen, GRID_LINE_COLOR, (0, r * GRID_SIZE), (GAME_WIDTH, r * GRID_SIZE))
+
+    # A. 繪製左側主網格與已經落下的方塊
     for r in range(ROWS):
         for c in range(COLS):
-            rect = pygame.Rect(c * GRID_SIZE, r * GRID_SIZE, GRID_SIZE, GRID_SIZE)
-            if grid[r][c] != 0:
-                pygame.draw.rect(screen, grid[r][c], rect)
-            pygame.draw.rect(screen, GRAY, rect, 1)
+            if game.grid[r][c] != BLACK:  # 只有非黑色（有方塊）的地方才著色，不覆蓋剛畫好的背景格線
+                pygame.draw.rect(screen, game.grid[r][c], (c * GRID_SIZE, r * GRID_SIZE, GRID_SIZE - 1, GRID_SIZE - 1))
+
+    # B. 繪製左側正在掉落的當前方塊
+    if not game.game_over:
+        for r, row in enumerate(game.current_piece):
+            for c, cell in enumerate(row):
+                if cell:
+                    x = (game.piece_x + c) * GRID_SIZE
+                    y = (game.piece_y + r) * GRID_SIZE
+                    pygame.draw.rect(screen, game.current_color, (x, y, GRID_SIZE - 1, GRID_SIZE - 1))
+
+    # C. 繪製左側與右側提示區的分割線
+    pygame.draw.line(screen, LIGHT_GRAY, (GAME_WIDTH, 0), (GAME_WIDTH, HEIGHT), 2)
+
+    # 💡 繪製右側的「下一個方塊 (Next) 提示區」與分數
+    font = pygame.font.SysFont('Microsoft JhengHei', 24)  # 使用微軟正黑體，防中文字型碎裂
+
+    # 畫 "Next:" 字樣
+    next_label = font.render('NEXT:', True, WHITE)
+    screen.blit(next_label, (GAME_WIDTH + 20, 30))
+
+    # 畫下一個方塊的微縮模型
+    for r, row in enumerate(game.next_piece):
+        for c, cell in enumerate(row):
+            if cell:
+                # 把下一個方塊畫在右側中間
+                x = GAME_WIDTH + 40 + c * GRID_SIZE
+                y = 80 + r * GRID_SIZE
+                pygame.draw.rect(screen, game.next_color, (x, y, GRID_SIZE - 1, GRID_SIZE - 1))
+
+    # D. 繪製分數顯示
+    score_label = font.render('SCORE:', True, WHITE)
+    screen.blit(score_label, (GAME_WIDTH + 20, 250))
+
+    score_text = font.render(str(game.score), True, (0, 255, 255))  # 青色分數字
+    screen.blit(score_text, (GAME_WIDTH + 20, 290))
+
+    # E. 繪製 Game Over 字樣
+    if game.game_over:
+        over_font = pygame.font.SysFont('Microsoft JhengHei', 36, bold=True)
+        over_text = over_font.render('GAME OVER', True, (255, 0, 0))
+        # 居中顯示在左側遊戲網格內
+        screen.blit(over_text, (GAME_WIDTH // 2 - over_text.get_width() // 2, HEIGHT // 2 - 20))
+
+    pygame.display.flip()
 
 
-def draw_piece(screen, piece):
-    """繪製當前正在下落的方塊"""
-    for i in range(4):
-        for j in range(4):
-            if i * 4 + j in piece.image():
-                rect = pygame.Rect((piece.x + j) * GRID_SIZE, (piece.y + i) * GRID_SIZE, GRID_SIZE, GRID_SIZE)
-                pygame.draw.rect(screen, piece.color, rect)
-                pygame.draw.rect(screen, WHITE, rect, 1)  # 白色邊框讓方塊更明顯
-
-
+# -----------------------------------------------------------------------------
+# 4. 主程式進入點
+# -----------------------------------------------------------------------------
 def main():
+    # ✨ 已修復：移除了多餘的 set_index
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
-    pygame.display.set_caption("Python 俄羅斯方塊")
+    pygame.display.set_caption("經典俄羅斯方塊 - 升級版")
     clock = pygame.time.Clock()
-    game = Tetris()
+    game = TetrisGame()
 
     fall_time = 0
-    fall_speed = 500  # 方塊每 500 毫秒（0.5秒）往下掉一格
 
-    font = pygame.font.SysFont("Arial", 24)
+    # 💡 新增：長按加速的速度設定
+    NORMAL_SPEED = 500  # 正常的自動下落速度（毫秒）
+    FAST_SPEED = 40  # 長按住下鍵時的超高速下落（毫秒）
+
+    fall_speed = NORMAL_SPEED
+    last_time = pygame.time.get_ticks()
 
     while True:
-        # 計算時間差（毫秒）
-        fall_time += clock.get_rawtime()
-        clock.tick(FPS)
+        current_time = pygame.time.get_ticks()
+        fall_time += current_time - last_time
+        last_time = current_time
 
         # 自動下落邏輯
-        if not game.game_over:
-            if fall_time >= fall_speed:
+        if fall_time >= fall_speed:
+            if not game.game_over:
                 game.move_down()
-                fall_time = 0
+            fall_time = 0
 
         # 事件監聽（鍵盤操作）
         for event in pygame.event.get():
@@ -174,48 +261,35 @@ def main():
                 pygame.quit()
                 sys.exit()
 
-            if event.type == pygame.KEYDOWN and not game.game_over:
-                if event.key == pygame.K_LEFT:
-                    game.move_side(-1)
-                elif event.key == pygame.K_RIGHT:
-                    game.move_side(1)
-                elif event.key == pygame.K_DOWN:
-                    game.move_down()
-                elif event.key == pygame.K_UP:
-                    game.rotate_piece()
-                elif event.key == pygame.K_SPACE:  # 空白鍵瞬間下落（Hard Drop）
-                    while not game.check_collision(game.current_piece, offset_y=1):
-                        game.current_piece.y += 1
-                    game.lock_piece()
+            # ⬇️ 偵測「按下」鍵盤
+            if event.type == pygame.KEYDOWN:
+                if game.game_over:
+                    # 輸了之後按隨便一個鍵可以重新開始
+                    game = TetrisGame()
+                    fall_speed = NORMAL_SPEED  # 重設速度
+                else:
+                    if event.key == pygame.K_LEFT:
+                        game.move_side(-1)
+                    elif event.key == pygame.K_RIGHT:
+                        game.move_side(1)
+                    elif event.key == pygame.K_UP:
+                        game.rotate()
+                    # 💡 變更：只要「按著」下方向鍵，下落判定速度立刻變成 40 毫秒一次！
+                    elif event.key == pygame.K_DOWN:
+                        fall_speed = FAST_SPEED
+                    elif event.key == pygame.K_SPACE:
+                        game.hard_drop()
 
-            # 遊戲結束後按 R 鍵重開
-            if event.type == pygame.KEYDOWN and game.game_over:
-                if event.key == pygame.K_r:
-                    game = Tetris()
+            # 💡 新增：偵測「放開」鍵盤
+            elif event.type == pygame.KEYUP:
+                if not game.game_over:
+                    # 💡 如果放開了下方向鍵，下落速度立刻恢復正常的慢速
+                    if event.key == pygame.K_DOWN:
+                        fall_speed = NORMAL_SPEED
 
-        # 畫面繪製
-        screen.fill(BLACK)
-        draw_grid(screen, game.grid)
-        if not game.game_over:
-            draw_piece(screen, game.current_piece)
-
-        # 顯示分數
-        score_text = font.render(f"Score: {game.score}", True, WHITE)
-        screen.blit(score_text, (10, 10))
-
-        # 遊戲結束畫面
-        if game.game_over:
-            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 180))  # 半透明遮罩
-            screen.blit(overlay, (0, 0))
-
-            over_text = font.render("GAME OVER", True, (255, 0, 0))
-            retry_text = font.render("Press 'R' to Restart", True, WHITE)
-
-            screen.blit(over_text, (WIDTH // 2 - over_text.get_width() // 2, HEIGHT // 2 - 30))
-            screen.blit(retry_text, (WIDTH // 2 - retry_text.get_width() // 2, HEIGHT // 2 + 10))
-
-        pygame.display.flip()
+        # 繪製畫面
+        draw_screen(screen, game)
+        clock.tick(FPS)
 
 
 if __name__ == "__main__":
